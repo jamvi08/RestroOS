@@ -2,6 +2,6 @@ import { requireWaiterPage } from "@/lib/waiter-session";
 import { WaiterMenu } from "@/components/waiter/WaiterMenu";
 
 export default async function WaiterMenuPage() {
-  const { restaurantName, currency } = await requireWaiterPage();
-  return <WaiterMenu restaurantName={restaurantName} currency={currency} />;
+  const { header, currency } = await requireWaiterPage();
+  return <WaiterMenu header={header} currency={currency} />;
 }

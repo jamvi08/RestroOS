@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Utensils, Minus, Plus, ArrowRight, BellRing, Receipt, Footprints, Loader2, Lock, PencilLine, CheckCircle2 } from "lucide-react";
+import { Utensils, Minus, Plus, ArrowRight, BellRing, Receipt, Footprints, Loader2, Lock, PencilLine, CheckCircle2, MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { cn, formatPrice } from "@/lib/utils";
 import { usePoll } from "@/lib/use-poll";
 import { STRINGS, type Lang } from "./i18n";
+import { VerifyPhone } from "./VerifyPhone";
 
 interface Category {
   id: string;
@@ -35,6 +36,8 @@ interface Restaurant {
   name: string;
   logo: string | null;
   currency: string;
+  /** Ask for a WhatsApp number on this menu: OFF, OPTIONAL (can skip) or REQUIRED (before ordering) */
+  customerOtp: "OFF" | "OPTIONAL" | "REQUIRED";
 }
 
 interface MenuDisplayProps {
@@ -59,6 +62,8 @@ interface TableStatus {
   /** FREE: nobody owns the table yet (ordering claims it). OWNER: this phone. TAKEN: another phone. */
   access: "FREE" | "OWNER" | "TAKEN";
   paid: { canRate: boolean } | null;
+  /** This phone verified a WhatsApp number here (masked), so the e-bill goes there */
+  customer: { phone: string } | null;
   orders: {
     id: string;
     status: OrderStatus;
@@ -71,6 +76,7 @@ interface TableStatus {
 
 const HELP_ICONS: Record<RequestType, string> = { CALL_WAITER: "🙋", WATER: "💧", BILL: "🧾" };
 const LANG_KEY = "restro.lang";
+const SKIPPED_KEY = "restro.skipVerify";
 
 function QuantityStepper({ quantity, onChange, label }: { quantity: number; onChange: (delta: number) => void; label: string }) {
   return (
@@ -112,6 +118,10 @@ export function MenuDisplay({ restaurant, slug, token, tableNumber, categories, 
   const [comment, setComment] = useState("");
   const [ratingSent, setRatingSent] = useState(false);
   const [ratingBusy, setRatingBusy] = useState(false);
+  const [isVerifyOpen, setIsVerifyOpen] = useState(false);
+  // Customer closed the WhatsApp sheet this visit: don't pop it up again by itself
+  const [verifySkipped, setVerifySkipped] = useState(false);
+  const [orderAfterVerify, setOrderAfterVerify] = useState(false);
 
   // Remember the customer's language on this phone (after mount: no localStorage on the server)
   useEffect(() => {
@@ -140,8 +150,39 @@ export function MenuDisplay({ restaurant, slug, token, tableNumber, categories, 
   const myOrders = status.data?.orders ?? [];
   const myRequests = status.data?.requests ?? [];
   const orderedCount = myOrders.reduce((s, o) => s + o.items.reduce((n, i) => n + i.quantity, 0), 0);
-  const waitingConfirm = myOrders.some((o) => o.status === "RECEIVED");
   const price = (n: number) => formatPrice(n, restaurant.currency);
+  const verifiedPhone = status.data?.customer?.phone ?? null;
+  const askNumber = restaurant.customerOtp !== "OFF" && canOrder && status.data !== null && !verifiedPhone && !status.data.paid;
+
+  // Right after the scan: ask for the WhatsApp number once (unless skipped earlier this visit)
+  useEffect(() => {
+    let skipped = false;
+    try {
+      skipped = sessionStorage.getItem(SKIPPED_KEY) === slug;
+    } catch {
+      // storage blocked: ask once per page load
+    }
+    if (skipped) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time sync from browser storage
+      setVerifySkipped(true);
+      return;
+    }
+    if (askNumber && !verifySkipped) setIsVerifyOpen(true);
+    // Only when the first table status arrives
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [askNumber]);
+
+  const onVerifyOpenChange = (open: boolean) => {
+    setIsVerifyOpen(open);
+    if (open) return;
+    setOrderAfterVerify(false);
+    setVerifySkipped(true);
+    try {
+      sessionStorage.setItem(SKIPPED_KEY, slug);
+    } catch {
+      // not critical
+    }
+  };
 
   const handleCategoryClick = (categoryId: string) => {
     setActiveCategory(categoryId);
@@ -178,6 +219,13 @@ export function MenuDisplay({ restaurant, slug, token, tableNumber, categories, 
     (err as { code?: string })?.code === "TABLE_TAKEN" ? `${t.takenTitle}. ${t.takenText}` : err instanceof Error ? err.message : t.error;
 
   const placeOrder = async () => {
+    // Restaurant wants a verified number before the first order
+    if (restaurant.customerOtp === "REQUIRED" && !verifiedPhone) {
+      setIsCartOpen(false);
+      setOrderAfterVerify(true);
+      setIsVerifyOpen(true);
+      return;
+    }
     setPlacing(true);
     setPlaceError(null);
     try {
@@ -190,10 +238,26 @@ export function MenuDisplay({ restaurant, slug, token, tableNumber, categories, 
       setOpenNotes({});
       setIsCartOpen(false);
     } catch (err) {
+      if ((err as { code?: string })?.code === "VERIFY_PHONE") {
+        setIsCartOpen(false);
+        setOrderAfterVerify(true);
+        setIsVerifyOpen(true);
+        return;
+      }
       setPlaceError(errorText(err));
+      setIsCartOpen(true);
     } finally {
       setPlacing(false);
       void status.refresh();
+    }
+  };
+
+  const onVerified = async () => {
+    setIsVerifyOpen(false);
+    await status.refresh();
+    if (orderAfterVerify) {
+      setOrderAfterVerify(false);
+      setIsCartOpen(true);
     }
   };
 
@@ -355,11 +419,22 @@ export function MenuDisplay({ restaurant, slug, token, tableNumber, categories, 
             </span>
             <span className="min-w-0 flex-1">
               <span className="block text-base font-bold text-foreground">{t.yourOrder(orderedCount)}</span>
-              <span className={cn("block text-[15px]", waitingConfirm ? "text-warning" : "text-muted-foreground")}>
-                {waitingConfirm ? t.status.RECEIVED : t.billSoFar(price(status.data?.bill?.total ?? 0))}
-              </span>
+              <span className="block text-[15px] text-muted-foreground">{t.billSoFar(price(status.data?.bill?.total ?? 0))}</span>
             </span>
             <span className="text-[15px] font-semibold text-primary">{t.view}</span>
+          </button>
+        )}
+
+        {/* Skipped the WhatsApp sheet earlier: a quiet way back to it */}
+        {askNumber && verifySkipped && (
+          <button
+            type="button"
+            onClick={() => setIsVerifyOpen(true)}
+            className="flex w-full items-center gap-3 rounded-2xl border border-[#b2f2bb] bg-success-soft px-4 py-3 text-left text-[15px] font-semibold text-success"
+          >
+            <MessageCircle className="size-5 shrink-0" />
+            <span className="flex-1">{t.verifyTitle}</span>
+            <ArrowRight className="size-4" />
           </button>
         )}
       </div>
@@ -567,6 +642,17 @@ export function MenuDisplay({ restaurant, slug, token, tableNumber, categories, 
         </DialogContent>
       </Dialog>
 
+      <VerifyPhone
+        open={isVerifyOpen}
+        onOpenChange={onVerifyOpenChange}
+        slug={slug}
+        token={token}
+        restaurantName={restaurant.name}
+        required={restaurant.customerOtp === "REQUIRED"}
+        t={t}
+        onVerified={onVerified}
+      />
+
       {/* Orders placed from this phone, with the running bill */}
       <Dialog open={isOrdersOpen} onOpenChange={setIsOrdersOpen}>
         <DialogContent>
@@ -579,7 +665,7 @@ export function MenuDisplay({ restaurant, slug, token, tableNumber, categories, 
               <section key={o.id} className="space-y-2">
                 <div className="flex items-baseline justify-between gap-2">
                   <h3 className="text-base font-bold text-foreground">{t.orderN(idx + 1)}</h3>
-                  <span className={cn("text-sm font-semibold", o.status === "RECEIVED" ? "text-warning" : o.status === "SERVED" ? "text-success" : "text-primary")}>
+                  <span className={cn("text-sm font-semibold", o.status === "SERVED" ? "text-success" : "text-primary")}>
                     {t.status[o.status]}
                   </span>
                 </div>
@@ -616,7 +702,11 @@ export function MenuDisplay({ restaurant, slug, token, tableNumber, categories, 
               </div>
             </dl>
           )}
-          {waitingConfirm && <p className="text-[15px] text-muted-foreground">{t.pendingNote}</p>}
+          {verifiedPhone && (
+            <p className="flex items-center gap-2 text-[15px] text-muted-foreground">
+              <MessageCircle className="size-4 shrink-0 text-success" /> {t.verified(verifiedPhone)}
+            </p>
+          )}
         </DialogContent>
       </Dialog>
     </div>

@@ -2,14 +2,19 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, BookOpen, QrCode, Settings, LogOut, Users } from "lucide-react";
+import { Home, BookOpen, QrCode, Settings, LogOut, Users, ClipboardList, Receipt, TrendingUp, Contact } from "lucide-react";
 import { signOut } from "next-auth/react";
 import { Logo } from "@/components/brand/Logo";
 import { cn } from "@/lib/utils";
 
+// `tab`: shown in the phone's bottom bar (5 max). The rest are on the Home page's Manage grid.
 const navigation = [
-  { name: "Home", href: "/dashboard", icon: Home },
-  { name: "Menu", href: "/dashboard/menu", icon: BookOpen },
+  { name: "Home", href: "/dashboard", icon: Home, tab: true },
+  { name: "Live orders", short: "Orders", href: "/dashboard/orders", icon: ClipboardList, tab: true },
+  { name: "Bills", href: "/dashboard/bills", icon: Receipt, tab: true },
+  { name: "Sales", href: "/dashboard/sales", icon: TrendingUp, tab: true },
+  { name: "Menu", href: "/dashboard/menu", icon: BookOpen, tab: true },
+  { name: "Customers", href: "/dashboard/customers", icon: Contact },
   { name: "Tables & QR", short: "Tables", href: "/dashboard/tables", icon: QrCode },
   { name: "Staff", href: "/dashboard/staff", icon: Users },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
@@ -76,7 +81,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
         {/* Mobile bottom tabs */}
         <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t border-border bg-card pb-[env(safe-area-inset-bottom)] md:hidden">
-          {navigation.map((item) => {
+          {navigation.filter((item) => item.tab).map((item) => {
             const active = isActive(item.href);
             return (
               <Link

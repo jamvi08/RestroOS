@@ -77,12 +77,18 @@ model orders {
   paymentStatus      PaymentStatus @default(PENDING)
   paymentMethod      String?       @default("CASH")
   diningSessionToken String?
+  /// The bill this order was paid on
+  billId             String?
+  /// When a waiter tapped "Got it" on a customer's QR order. Null = nobody has looked yet.
+  seenAt             DateTime?
   createdAt          DateTime      @default(now())
   updatedAt          DateTime      @updatedAt
   order_items        order_items[]
   restaurants        restaurants   @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   tables             tables?       @relation(fields: [tableId], references: [id])
+  bills              bills?        @relation(fields: [billId], references: [id], onDelete: SetNull)
 
+  @@index([billId])
   @@index([diningSessionToken])
   @@index([restaurantId, createdAt])
   @@index([restaurantId, status, createdAt])
@@ -102,8 +108,14 @@ model restaurants {
   taxRate          Float              @default(5.0)
   isActive         Boolean            @default(true)
   status           RestaurantStatus   @default(PENDING)
+  /// Ask customers to verify their WhatsApp number on the QR menu (for e-bills and offers)
+  customerOtp      CustomerOtpMode    @default(OFF)
+  /// Last bill number handed out; bills are numbered 1, 2, 3… per restaurant
+  billCounter      Int                @default(0)
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
+  bills            bills[]
+  customers        customers[]
   categories       categories[]
   menu_items       menu_items[]
   orders           orders[]
@@ -126,6 +138,7 @@ model tables {
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
   orders           orders[]
+  bills            bills[]
   service_requests service_requests[]
   table_sessions   table_sessions[]
   restaurants      restaurants        @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
@@ -140,7 +153,8 @@ model users {
   restaurantId String?
   name         String
   email        String?      @unique
-  phone        String?      @unique
+  /// Unique per restaurant: the same waiter can work at more than one place
+  phone        String?
   password     String?
   role         UserRole     @default(WAITER)
   pinCode      String?      @default("1234")
@@ -148,7 +162,9 @@ model users {
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
   restaurants  restaurants? @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  bills        bills[]
 
+  @@unique([restaurantId, phone])
   @@index([restaurantId, pinCode, isActive])
   @@index([phone])
 }
@@ -158,12 +174,15 @@ model otp_verifications {
   phone     String
   otp       String
   purpose   String   @default("WAITER_AUTH")
+  /// Set for customer codes requested from a table QR
+  tableId   String?
   expiresAt DateTime
   attempts  Int      @default(0)
   isUsed    Boolean  @default(false)
   createdAt DateTime @default(now())
 
   @@index([phone, purpose, isUsed])
+  @@index([tableId, createdAt])
   @@index([expiresAt])
 }
 
@@ -190,6 +209,15 @@ enum TableStatus {
   AVAILABLE
   OCCUPIED
   RESERVED
+}
+
+enum CustomerOtpMode {
+  /// Don't ask for a number
+  OFF
+  /// Ask, but the customer can skip
+  OPTIONAL
+  /// Must verify before ordering
+  REQUIRED
 }
 
 enum UserRole {
@@ -241,8 +269,11 @@ model table_sessions {
   endedAt      DateTime?
   /// PAID, RESET (waiter freed the table for another phone) or EXPIRED
   endedReason  String?
+  /// Set once the phone verifies its WhatsApp number
+  customerId   String?
   restaurants  restaurants @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   tables       tables      @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  customers    customers?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
   feedback     feedback?
 
   @@index([tableId, endedAt])
@@ -262,4 +293,49 @@ model feedback {
   table_sessions table_sessions @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@index([restaurantId, createdAt])
+}
+
+/// A diner who verified their WhatsApp number on the QR menu. One row per restaurant.
+model customers {
+  id             String           @id @default(cuid())
+  restaurantId   String
+  phone          String
+  /// Ticked "Send me offers on WhatsApp"
+  offersOptIn    Boolean          @default(false)
+  createdAt      DateTime         @default(now())
+  lastSeenAt     DateTime         @default(now())
+  restaurants    restaurants      @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  table_sessions table_sessions[]
+  bills          bills[]
+
+  @@unique([restaurantId, phone])
+  @@index([restaurantId, lastSeenAt])
+}
+
+/// A paid bill: every unpaid order on a table, settled together.
+model bills {
+  id             String      @id @default(cuid())
+  restaurantId   String
+  billNumber     Int
+  tableId        String?
+  tableNumber    String
+  subtotal       Float
+  tax            Float
+  totalAmount    Float
+  /// CASH or UPI
+  paymentMethod  String
+  customerId     String?
+  /// Staff member who marked it paid
+  staffId        String?
+  whatsappSentAt DateTime?
+  createdAt      DateTime    @default(now())
+  orders         orders[]
+  restaurants    restaurants @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  tables         tables?     @relation(fields: [tableId], references: [id], onDelete: SetNull)
+  customers      customers?  @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  users          users?      @relation(fields: [staffId], references: [id], onDelete: SetNull)
+
+  @@unique([restaurantId, billNumber])
+  @@index([restaurantId, createdAt])
+  @@index([customerId])
 }

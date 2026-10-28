@@ -16,7 +16,7 @@ export const TABLE_STATE: Record<TableState, { label: string; tile: string; dot:
 };
 
 export const ORDER_STATUS_LABEL: Record<string, string> = {
-  RECEIVED: "Waiting for you to accept",
+  RECEIVED: "In kitchen",
   PREPARING: "In kitchen",
   READY: "Ready to serve",
   SERVED: "Served",

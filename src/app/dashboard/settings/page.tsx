@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Notice } from "@/components/ui/notice";
 import { PageHeader } from "@/components/dashboard/PageHeader";
-import { ImagePlus } from "lucide-react";
+import { ImagePlus, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 
@@ -138,6 +138,41 @@ export default function SettingsPage() {
             <Input id="address" name="address" defaultValue={profile.address} required />
           </div>
         </div>
+
+        <fieldset className="space-y-3 border-t border-border pt-5">
+          <legend className="flex items-center gap-2 text-base font-bold text-foreground">
+            <MessageCircle className="size-5 text-success" />
+            Customer WhatsApp number
+          </legend>
+          <p className="text-[15px] text-muted-foreground">
+            When customers scan the table QR, ask for their WhatsApp number with a 6-digit code. Their bill is sent there, and
+            those who tick &quot;Send me offers&quot; show up in Customers.
+          </p>
+          <div className="grid gap-3 sm:grid-cols-3">
+            {[
+              { value: "OFF", label: "Don't ask", hint: "No number, no e-bill" },
+              { value: "OPTIONAL", label: "Ask, can skip", hint: "Recommended" },
+              { value: "REQUIRED", label: "Must verify", hint: "Before the first order" },
+            ].map((o) => (
+              <label
+                key={o.value}
+                className="flex cursor-pointer items-start gap-3 rounded-xl border-[1.5px] border-input p-3 has-checked:border-primary has-checked:bg-primary-soft"
+              >
+                <input
+                  type="radio"
+                  name="customerOtp"
+                  value={o.value}
+                  defaultChecked={(profile.customerOtp ?? "OFF") === o.value}
+                  className="mt-0.5 size-5 accent-[#d9480f]"
+                />
+                <span>
+                  <span className="block text-base font-semibold text-foreground">{o.label}</span>
+                  <span className="block text-sm text-muted-foreground">{o.hint}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
 
         <div className="flex justify-end border-t border-border pt-5">
           <Button type="submit" disabled={isLoading} className="w-full sm:w-auto">

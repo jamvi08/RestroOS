@@ -1,5 +1,5 @@
 import prisma from "@/lib/prisma";
-import { openOrderWhere, round2 } from "@/lib/orders";
+import { billFor, openOrderWhere, round2 } from "@/lib/orders";
 
 /** What a table needs from the waiter right now, most urgent first. */
 export type TableState = "HELP" | "NEW_ORDER" | "BILL" | "EATING" | "FREE";
@@ -15,6 +15,8 @@ export type BoardAlert = {
   status: "OPEN" | "ACKNOWLEDGED";
   createdAt: string;
   itemCount?: number;
+  /** New QR orders: what to tell the kitchen, without opening the table */
+  items?: { name: string; quantity: number; note: string | null }[];
 };
 
 export type BoardTable = {
@@ -42,8 +44,9 @@ export async function getBoard(restaurantId: string) {
         tableNumber: true,
         status: true,
         totalAmount: true,
+        seenAt: true,
         createdAt: true,
-        order_items: { select: { quantity: true } },
+        order_items: { select: { name: true, quantity: true, specialInstructions: true } },
       },
     }),
     prisma.service_requests.findMany({
@@ -63,8 +66,9 @@ export async function getBoard(restaurantId: string) {
       status: r.status as "OPEN" | "ACKNOWLEDGED",
       createdAt: r.createdAt.toISOString(),
     })),
+    // Customer QR orders go straight to the kitchen; this just makes sure a waiter has seen them
     ...orders
-      .filter((o) => o.status === "RECEIVED")
+      .filter((o) => !o.seenAt)
       .map((o) => ({
         key: `order:${o.id}`,
         kind: "ORDER" as const,
@@ -75,6 +79,7 @@ export async function getBoard(restaurantId: string) {
         status: "OPEN" as const,
         createdAt: o.createdAt.toISOString(),
         itemCount: o.order_items.reduce((s, i) => s + i.quantity, 0),
+        items: o.order_items.map((i) => ({ name: i.name, quantity: i.quantity, note: i.specialInstructions || null })),
       })),
   ].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 
@@ -82,11 +87,10 @@ export async function getBoard(restaurantId: string) {
     .map((t) => {
       const tOrders = orders.filter((o) => o.tableId === t.id);
       const tRequests = requests.filter((r) => r.tableId === t.id);
-      const accepted = tOrders.filter((o) => o.status !== "RECEIVED");
 
       let state: TableState = "FREE";
       if (tRequests.some((r) => r.type !== "BILL")) state = "HELP";
-      else if (tOrders.some((o) => o.status === "RECEIVED")) state = "NEW_ORDER";
+      else if (tOrders.some((o) => !o.seenAt)) state = "NEW_ORDER";
       else if (tRequests.some((r) => r.type === "BILL")) state = "BILL";
       else if (tOrders.length > 0) state = "EATING";
 
@@ -100,8 +104,8 @@ export async function getBoard(restaurantId: string) {
         label: t.label,
         capacity: t.capacity,
         state,
-        runningTotal: round2(accepted.reduce((s, o) => s + o.totalAmount, 0)),
-        itemCount: accepted.reduce((s, o) => s + o.order_items.reduce((n, i) => n + i.quantity, 0), 0),
+        runningTotal: round2(tOrders.reduce((s, o) => s + o.totalAmount, 0)),
+        itemCount: tOrders.reduce((s, o) => s + o.order_items.reduce((n, i) => n + i.quantity, 0), 0),
         since: firstSeen ? firstSeen.toISOString() : null,
       };
     })
@@ -129,6 +133,7 @@ export async function getTableDetail(restaurantId: string, tableId: string) {
         tax: true,
         totalAmount: true,
         customerNotes: true,
+        seenAt: true,
         createdAt: true,
         order_items: {
           orderBy: { name: "asc" },
@@ -143,15 +148,83 @@ export async function getTableDetail(restaurantId: string, tableId: string) {
     }),
   ]);
 
-  const accepted = orders.filter((o) => o.status !== "RECEIVED");
-  return {
-    table,
-    orders,
-    requests,
-    bill: {
-      subtotal: round2(accepted.reduce((s, o) => s + o.subtotal, 0)),
-      tax: round2(accepted.reduce((s, o) => s + o.tax, 0)),
-      total: round2(accepted.reduce((s, o) => s + o.totalAmount, 0)),
-    },
+  return { table, orders, requests, bill: billFor(orders) };
+}
+
+export type LiveTable = {
+  tableId: string;
+  tableNumber: string;
+  since: string;
+  total: number;
+  requests: { id: string; type: "CALL_WAITER" | "WATER" | "BILL"; status: "OPEN" | "ACKNOWLEDGED"; createdAt: string }[];
+  orders: {
+    id: string;
+    status: string;
+    isNew: boolean;
+    total: number;
+    createdAt: string;
+    notes: string | null;
+    items: { name: string; quantity: number; isVeg: boolean; note: string | null }[];
+  }[];
+};
+
+/** Every table with something going on, with every unpaid order and what's in it. For the manager's Live orders page. */
+export async function getLiveOrders(restaurantId: string) {
+  const [orders, requests] = await Promise.all([
+    prisma.orders.findMany({
+      where: { restaurantId, paymentStatus: "PENDING", status: { not: "CANCELLED" }, tableId: { not: null } },
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true,
+        tableId: true,
+        tableNumber: true,
+        status: true,
+        totalAmount: true,
+        seenAt: true,
+        customerNotes: true,
+        createdAt: true,
+        order_items: { orderBy: { name: "asc" }, select: { name: true, quantity: true, isVeg: true, specialInstructions: true } },
+      },
+    }),
+    prisma.service_requests.findMany({
+      where: { restaurantId, status: { in: ["OPEN", "ACKNOWLEDGED"] } },
+      orderBy: { createdAt: "asc" },
+      select: { id: true, tableId: true, tableNumber: true, type: true, status: true, createdAt: true },
+    }),
+  ]);
+
+  const tables = new Map<string, LiveTable>();
+  const tableFor = (tableId: string, tableNumber: string, at: Date) => {
+    let t = tables.get(tableId);
+    if (!t) {
+      t = { tableId, tableNumber, since: at.toISOString(), total: 0, requests: [], orders: [] };
+      tables.set(tableId, t);
+    }
+    if (at.toISOString() < t.since) t.since = at.toISOString();
+    return t;
   };
+
+  for (const o of orders) {
+    const t = tableFor(o.tableId!, o.tableNumber, o.createdAt);
+    t.total = round2(t.total + o.totalAmount);
+    t.orders.push({
+      id: o.id,
+      status: o.status,
+      isNew: !o.seenAt,
+      total: o.totalAmount,
+      createdAt: o.createdAt.toISOString(),
+      notes: o.customerNotes || null,
+      items: o.order_items.map((i) => ({ name: i.name, quantity: i.quantity, isVeg: i.isVeg, note: i.specialInstructions || null })),
+    });
+  }
+  for (const r of requests) {
+    tableFor(r.tableId, r.tableNumber, r.createdAt).requests.push({
+      id: r.id,
+      type: r.type,
+      status: r.status as "OPEN" | "ACKNOWLEDGED",
+      createdAt: r.createdAt.toISOString(),
+    });
+  }
+
+  return [...tables.values()].sort((a, b) => a.tableNumber.localeCompare(b.tableNumber, undefined, { numeric: true }));
 }

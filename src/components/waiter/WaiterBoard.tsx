@@ -3,18 +3,18 @@
 import Link from "next/link";
 import { WifiOff, LayoutGrid } from "lucide-react";
 import { cn, formatPrice } from "@/lib/utils";
-import { WaiterHeader } from "./WaiterHeader";
+import { WaiterHeader, type WaiterHeaderInfo } from "./WaiterHeader";
 import { SoundBanner } from "./SoundBanner";
 import { AlertCard } from "./AlertCard";
 import { TABLE_STATE } from "./labels";
 import { useBoard, minutesAgo } from "./use-waiter-data";
 
-export function WaiterBoard({ restaurantName, currency }: { restaurantName: string; currency: string }) {
+export function WaiterBoard({ header, currency }: { header: WaiterHeaderInfo; currency: string }) {
   const { data, error, fetchedAt, refresh } = useBoard();
 
   return (
     <div className="min-h-dvh bg-background">
-      <WaiterHeader restaurantName={restaurantName} />
+      <WaiterHeader {...header} />
 
       <main className="mx-auto max-w-3xl space-y-6 px-4 py-4 pb-10">
         <SoundBanner />

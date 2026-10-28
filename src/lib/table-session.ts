@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
 import prisma from "@/lib/prisma";
+import { rememberedCustomer } from "@/lib/customer";
 
 /**
  * "First phone only": the first phone that orders or asks for help at a free
@@ -79,15 +80,22 @@ export const TAKEN_MESSAGE =
 /**
  * For actions that need to own the table (order, call waiter). Claims a free
  * table for this phone, or returns an error message if another phone owns it.
+ * A phone that verified its number here before is linked to the session as that customer.
  */
 export async function claimTable(table: { id: string; restaurantId: string }) {
   const { access, active } = await tableAccess(table.id);
-  if (access === "OWNER") return { sessionId: active!.id };
   if (access === "TAKEN") return { error: TAKEN_MESSAGE };
+  if (access === "OWNER") {
+    if (active!.customerId) return { sessionId: active!.id, customerId: active!.customerId };
+    const customer = await rememberedCustomer(table.restaurantId);
+    if (customer) await linkCustomer(active!.id, customer.id);
+    return { sessionId: active!.id, customerId: customer?.id ?? null };
+  }
 
+  const customer = await rememberedCustomer(table.restaurantId);
   const secret = randomBytes(24).toString("base64url");
   const created = await prisma.table_sessions.create({
-    data: { restaurantId: table.restaurantId, tableId: table.id, secretHash: hashSecret(secret) },
+    data: { restaurantId: table.restaurantId, tableId: table.id, secretHash: hashSecret(secret), customerId: customer?.id },
   });
 
   // Two phones claiming at the same moment: the earliest session wins
@@ -108,7 +116,16 @@ export async function claimTable(table: { id: string; restaurantId: string }) {
     path: "/",
     maxAge: COOKIE_MAX_AGE,
   });
-  return { sessionId: created.id };
+  if (customer) await prisma.customers.update({ where: { id: customer.id }, data: { lastSeenAt: new Date() } });
+  return { sessionId: created.id, customerId: customer?.id ?? null };
+}
+
+/** This table's phone has verified its WhatsApp number: e-bill goes there. */
+export async function linkCustomer(sessionId: string, customerId: string) {
+  await prisma.$transaction([
+    prisma.table_sessions.update({ where: { id: sessionId }, data: { customerId } }),
+    prisma.customers.update({ where: { id: customerId }, data: { lastSeenAt: new Date() } }),
+  ]);
 }
 
 /** Bill paid, or the waiter frees the table for another phone. */

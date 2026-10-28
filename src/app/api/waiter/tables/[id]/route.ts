@@ -1,9 +1,11 @@
-import { NextResponse, NextRequest } from "next/server";
+import { NextResponse, NextRequest, after } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireStaff } from "@/lib/staff-auth";
 import { getTableDetail } from "@/lib/board";
 import { priceItems, totalsFor } from "@/lib/orders";
 import { activeSession, endTableSession } from "@/lib/table-session";
+import { AlreadyPaidError, sendBillOnWhatsApp, settleTable } from "@/lib/bills";
+import { maskPhone } from "@/lib/customer";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -17,7 +19,16 @@ export async function GET(_req: NextRequest, { params }: Params) {
     const detail = await getTableDetail(auth.staff.restaurantId, id);
     if (!detail) return NextResponse.json({ message: "Table not found." }, { status: 404 });
     const phone = await activeSession(id);
-    return NextResponse.json({ ...detail, taxRate: auth.staff.taxRate, phoneConnected: Boolean(phone) });
+    const customer = phone?.customerId
+      ? await prisma.customers.findUnique({ where: { id: phone.customerId }, select: { phone: true } })
+      : null;
+    return NextResponse.json({
+      ...detail,
+      taxRate: auth.staff.taxRate,
+      phoneConnected: Boolean(phone),
+      // Verified WhatsApp number: the e-bill goes here when the table pays
+      customerPhone: customer ? maskPhone(customer.phone) : null,
+    });
   } catch (error) {
     console.error("Waiter table error:", error);
     return NextResponse.json({ message: "Could not load this table." }, { status: 500 });
@@ -26,7 +37,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
 
 // POST /api/waiter/tables/:id
 //   { action: "add-items", items: [{ menuItemId, quantity }], note? }  waiter takes an order
-//   { action: "pay", method: "CASH" | "UPI" }                          settle the bill, free the table
+//   { action: "pay", method: "CASH" | "UPI" }                          settle the bill, free the table, WhatsApp the e-bill
 //   { action: "reset-phone" }                                          let a different customer phone take over
 export async function POST(req: NextRequest, { params }: Params) {
   try {
@@ -56,8 +67,9 @@ export async function POST(req: NextRequest, { params }: Params) {
             tableNumber: table.tableNumber,
             taxRate,
             ...totalsFor(priced.lines, taxRate),
-            // Taken by the waiter in person, so it goes straight to the kitchen
+            // Taken by the waiter in person: already seen, no "New order" alert
             status: "PREPARING",
+            seenAt: new Date(),
             customerNotes: note,
             order_items: { create: priced.lines },
           },
@@ -72,32 +84,24 @@ export async function POST(req: NextRequest, { params }: Params) {
         return NextResponse.json({ message: "Choose Cash or UPI." }, { status: 400 });
       }
 
-      const unconfirmed = await prisma.orders.count({
-        where: { tableId: table.id, status: "RECEIVED", paymentStatus: "PENDING" },
-      });
-      if (unconfirmed > 0) {
-        return NextResponse.json(
-          { message: "This table has a new order you haven't accepted. Accept or reject it first." },
-          { status: 409 }
-        );
+      let bill;
+      try {
+        bill = await settleTable({ restaurantId, table, method: body.method, staffId: auth.staff.id });
+      } catch (err) {
+        if (err instanceof AlreadyPaidError) {
+          return NextResponse.json({ message: "Another waiter just took payment for this table." }, { status: 409 });
+        }
+        throw err;
       }
-
-      const now = new Date();
-      const [paid] = await prisma.$transaction([
-        prisma.orders.updateMany({
-          where: { tableId: table.id, paymentStatus: "PENDING", status: { notIn: ["CANCELLED", "RECEIVED"] } },
-          data: { paymentStatus: "PAID", paymentMethod: body.method, status: "SERVED" },
-        }),
-        prisma.service_requests.updateMany({
-          where: { tableId: table.id, status: { in: ["OPEN", "ACKNOWLEDGED"] } },
-          data: { status: "DONE", resolvedAt: now },
-        }),
-        prisma.tables.update({ where: { id: table.id }, data: { status: "AVAILABLE" } }),
-      ]);
+      if (!bill) {
+        return NextResponse.json({ message: "Nothing to pay on this table." }, { status: 409 });
+      }
       // The customer's phone loses access to this table; the next customers start fresh
       await endTableSession(table.id, "PAID");
+      // Don't make the waiter wait for WhatsApp
+      if (bill.customerId) after(() => sendBillOnWhatsApp(bill.id));
 
-      return NextResponse.json({ success: true, ordersPaid: paid.count });
+      return NextResponse.json({ success: true, billNumber: bill.billNumber, ordersPaid: bill.ordersPaid, eBill: Boolean(bill.customerId) });
     }
 
     if (body.action === "reset-phone") {

@@ -73,7 +73,7 @@ export default async function CustomerOrderPage({ params }: OrderPageProps) {
   // Render the interactive client component
   return (
     <MenuDisplay 
-      restaurant={{ name: restaurant.name, logo: restaurant.logo, currency: restaurant.currency }}
+      restaurant={{ name: restaurant.name, logo: restaurant.logo, currency: restaurant.currency, customerOtp: restaurant.customerOtp }}
       slug={slug}
       token={token}
       tableNumber={table.tableNumber}

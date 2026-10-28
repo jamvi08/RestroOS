@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Check, Minus, Plus, X, WifiOff, Banknote, Smartphone, UtensilsCrossed, MonitorSmartphone } from "lucide-react";
+import { ArrowLeft, Check, Minus, Plus, X, WifiOff, Banknote, Smartphone, UtensilsCrossed, MonitorSmartphone, MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
 import { VegMark } from "@/components/ui/veg-mark";
@@ -22,6 +22,8 @@ type Order = {
   tax: number;
   totalAmount: number;
   customerNotes: string | null;
+  /** null = customer's QR order nobody has tapped "Got it" on yet */
+  seenAt: string | null;
   createdAt: string;
   order_items: Item[];
 };
@@ -32,6 +34,7 @@ type Detail = {
   bill: { subtotal: number; tax: number; total: number };
   taxRate: number;
   phoneConnected: boolean;
+  customerPhone: string | null;
 };
 
 export function WaiterTable({ tableId, currency }: { tableId: string; currency: string }) {
@@ -67,7 +70,8 @@ export function WaiterTable({ tableId, currency }: { tableId: string; currency: 
 
   const pay = (method: "CASH" | "UPI") => {
     if (!data) return;
-    if (!window.confirm(`Table ${data.table.tableNumber} paid ${price(data.bill.total)} by ${method === "CASH" ? "cash" : "UPI"}?\n\nThe table will become free.`)) return;
+    const eBill = data.customerPhone ? `\nThe bill goes to ${data.customerPhone} on WhatsApp.` : "";
+    if (!window.confirm(`Table ${data.table.tableNumber} paid ${price(data.bill.total)} by ${method === "CASH" ? "cash" : "UPI"}?\n\nThe table will become free.${eBill}`)) return;
     void act("pay", async () => {
       await send(`/api/waiter/tables/${tableId}`, { action: "pay", method });
       router.push("/waiter");
@@ -83,9 +87,8 @@ export function WaiterTable({ tableId, currency }: { tableId: string; currency: 
     );
   }
 
-  const newOrders = data.orders.filter((o) => o.status === "RECEIVED");
-  const running = data.orders.filter((o) => o.status !== "RECEIVED");
-  const hasBill = running.length > 0;
+  const orders = data.orders;
+  const hasBill = orders.length > 0;
 
   return (
     <div className="min-h-dvh bg-background pb-28">
@@ -153,86 +156,49 @@ export function WaiterTable({ tableId, currency }: { tableId: string; currency: 
           />
         ))}
 
-        {/* Customer QR orders waiting for the waiter to check and accept */}
-        {newOrders.map((o) => (
-          <section key={o.id} className="space-y-3 rounded-2xl border-2 border-primary bg-primary-soft p-4">
-            <div className="flex items-baseline justify-between gap-2">
-              <h2 className="text-lg font-bold text-foreground">🛎️ New order from customer</h2>
-              <span className="shrink-0 text-sm text-muted-foreground">{minutesAgo(o.createdAt, fetchedAt)}</span>
-            </div>
-            <ul className="space-y-2 rounded-xl bg-card p-3">
-              {o.order_items.map((i) => (
-                <li key={i.id} className="text-base">
-                  <div className="flex items-center gap-2">
-                    <VegMark isVeg={i.isVeg} />
-                    <span className="font-bold tabular-nums">{i.quantity} ×</span>
-                    <span className="min-w-0 flex-1 truncate">{i.name}</span>
-                    <span className="tabular-nums text-muted-foreground">{price(i.price * i.quantity)}</span>
-                  </div>
-                  {i.specialInstructions && (
-                    <p className="mt-0.5 pl-6 text-[15px] font-semibold text-warning">📝 {i.specialInstructions}</p>
-                  )}
-                </li>
-              ))}
-            </ul>
-            {o.customerNotes && <p className="text-[15px] text-foreground">📝 {o.customerNotes}</p>}
-            <p className="text-[15px] text-muted-foreground">Confirm with the customer, then accept to send it to the kitchen.</p>
-            <div className="flex gap-2">
-              <Button
-                variant="success"
-                size="lg"
-                className="flex-[2]"
-                disabled={busy !== null}
-                onClick={() => act(`accept:${o.id}`, () => send(`/api/waiter/orders/${o.id}`, { action: "accept" }))}
-              >
-                <Check />
-                Accept · {price(o.totalAmount)}
-              </Button>
-              <Button
-                variant="destructive"
-                size="lg"
-                className="flex-1"
-                disabled={busy !== null}
-                onClick={() => {
-                  if (window.confirm("Reject this order? Use this for wrong or duplicate orders.")) {
-                    void act(`reject:${o.id}`, () => send(`/api/waiter/orders/${o.id}`, { action: "reject" }));
-                  }
-                }}
-              >
-                <X />
-                Reject
-              </Button>
-            </div>
-          </section>
-        ))}
-
-        {/* Accepted orders: what's on the table and in the kitchen */}
-        {running.length === 0 && newOrders.length === 0 ? (
+        {/* Everything ordered: QR orders go straight to the kitchen, new ones are highlighted until someone taps "Got it" */}
+        {orders.length === 0 ? (
           <div className="flex flex-col items-center rounded-2xl border-2 border-dashed border-border bg-card px-6 py-10 text-center">
             <UtensilsCrossed className="mb-3 size-8 text-muted-foreground" />
             <p className="text-base font-semibold text-foreground">Nothing ordered yet</p>
             <p className="text-[15px] text-muted-foreground">Tap “Add items” to take the order.</p>
           </div>
         ) : (
-          running.map((o, idx) => (
-            <section key={o.id} className="space-y-3 rounded-2xl border border-border bg-card p-4">
+          orders.map((o, idx) => (
+            <section
+              key={o.id}
+              className={cn("space-y-3 rounded-2xl border bg-card p-4", o.seenAt ? "border-border" : "border-2 border-primary bg-primary-soft")}
+            >
               <div className="flex items-center justify-between gap-2">
                 <div>
-                  <h2 className="text-base font-bold text-foreground">Order {idx + 1}</h2>
+                  <h2 className="text-base font-bold text-foreground">
+                    {o.seenAt ? `Order ${idx + 1}` : `🛎️ New order from customer`}
+                  </h2>
                   <p className={cn("text-sm font-semibold", o.status === "SERVED" ? "text-success" : "text-primary")}>
                     {ORDER_STATUS_LABEL[o.status]} · {minutesAgo(o.createdAt, fetchedAt)}
                   </p>
                 </div>
-                {o.status !== "SERVED" && (
+                {!o.seenAt ? (
                   <Button
-                    variant="outline"
                     size="sm"
                     disabled={busy !== null}
-                    onClick={() => act(`served:${o.id}`, () => send(`/api/waiter/orders/${o.id}`, { action: "served" }))}
+                    onClick={() => act(`seen:${o.id}`, () => send(`/api/waiter/orders/${o.id}`, { action: "seen" }))}
                   >
                     <Check />
-                    Served
+                    Got it
                   </Button>
+                ) : (
+                  o.status !== "SERVED" && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={busy !== null}
+                      onClick={() => act(`served:${o.id}`, () => send(`/api/waiter/orders/${o.id}`, { action: "served" }))}
+                    >
+                      <Check />
+                      Served
+                    </Button>
+                  )
                 )}
               </div>
               {o.customerNotes && <p className="text-[15px] text-foreground">📝 {o.customerNotes}</p>}
@@ -272,6 +238,20 @@ export function WaiterTable({ tableId, currency }: { tableId: string; currency: 
                   </li>
                 ))}
               </ul>
+              {o.status !== "SERVED" && (
+                <button
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => {
+                    if (window.confirm(`Cancel this whole order (${price(o.totalAmount)})? Use this for wrong, duplicate or prank orders.`)) {
+                      void act(`cancel:${o.id}`, () => send(`/api/waiter/orders/${o.id}`, { action: "cancel" }));
+                    }
+                  }}
+                  className="text-sm font-semibold text-destructive hover:underline"
+                >
+                  Cancel order
+                </button>
+              )}
             </section>
           ))
         )}
@@ -296,17 +276,20 @@ export function WaiterTable({ tableId, currency }: { tableId: string; currency: 
               </div>
             </dl>
             <div className="grid grid-cols-2 gap-2 pt-1">
-              <Button variant="success" size="lg" disabled={busy !== null || newOrders.length > 0} onClick={() => pay("CASH")}>
+              <Button variant="success" size="lg" disabled={busy !== null} onClick={() => pay("CASH")}>
                 <Banknote />
                 Paid cash
               </Button>
-              <Button variant="success" size="lg" disabled={busy !== null || newOrders.length > 0} onClick={() => pay("UPI")}>
+              <Button variant="success" size="lg" disabled={busy !== null} onClick={() => pay("UPI")}>
                 <Smartphone />
                 Paid UPI
               </Button>
             </div>
-            {newOrders.length > 0 && (
-              <p className="text-sm text-muted-foreground">Accept or reject the new order before taking payment.</p>
+            {data.customerPhone && (
+              <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                <MessageCircle className="size-4 text-success" />
+                Bill will be sent to {data.customerPhone} on WhatsApp
+              </p>
             )}
           </section>
         )}

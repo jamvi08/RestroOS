@@ -8,7 +8,3 @@ export function formatPrice(amount: number, currency = "₹") {
   return `${currency}${value}`
 }
 
-/** "Spice Grill", "spice grill" and "SpiceGrill" all match: lowercase, letters and digits only. */
-export function normalizeRestaurantName(name: string) {
-  return name.toLowerCase().normalize("NFKC").replace(/[^\p{L}\p{N}]/gu, "")
-}

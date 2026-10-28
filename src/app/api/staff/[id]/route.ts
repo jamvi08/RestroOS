@@ -1,9 +1,7 @@
 import { NextResponse, NextRequest } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
-import bcrypt from "bcryptjs";
 import prisma from "@/lib/prisma";
-import { MIN_PASSWORD_LENGTH } from "@/lib/password";
 import { blockUnlessApproved } from "@/lib/approval";
 
 // PUT /api/staff/[id] - Toggle active status or update details
@@ -41,18 +39,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     const body = await req.json();
-    const { name, phone, role, isActive, password } = body;
-
-    let newPasswordHash: string | undefined;
-    if (password !== undefined) {
-      if (typeof password !== "string" || password.length < MIN_PASSWORD_LENGTH) {
-        return NextResponse.json(
-          { message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` },
-          { status: 400 }
-        );
-      }
-      newPasswordHash = await bcrypt.hash(password, 10);
-    }
+    const { name, phone, role, isActive } = body;
 
     let updatedPhone = undefined;
     if (phone) {
@@ -60,9 +47,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       if (cleaned.length !== 10) {
         return NextResponse.json({ message: "Invalid 10-digit phone number" }, { status: 400 });
       }
-      // Check collision
+      // Check collision within this restaurant (other restaurants may share a waiter)
       const collision = await prisma.users.findFirst({
-        where: { phone: cleaned, NOT: { id } },
+        where: { phone: cleaned, restaurantId: currentUser.restaurantId, NOT: { id } },
       });
       if (collision) {
         return NextResponse.json({ message: "Phone number already in use" }, { status: 409 });
@@ -74,11 +61,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       where: { id },
       data: {
         ...(name && { name: name.trim() }),
-        // A new number must be verified on WhatsApp again, so drop the old password
-        ...(updatedPhone && updatedPhone !== targetStaff.phone && { phone: updatedPhone, password: null }),
-        ...(role && { role }),
+        ...(updatedPhone && { phone: updatedPhone }),
+        ...((role === "WAITER" || role === "MANAGER") && { role }),
         ...(typeof isActive === "boolean" && { isActive }),
-        ...(newPasswordHash && { password: newPasswordHash }),
       },
       select: {
         id: true,

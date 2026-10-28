@@ -4,11 +4,9 @@ import { findTableByQr } from "@/lib/table-access";
 import { priceItems, totalsFor } from "@/lib/orders";
 import { claimTable } from "@/lib/table-session";
 
-// Unconfirmed customer orders allowed per table before the waiter must step in.
-const MAX_PENDING_PER_TABLE = 3;
-
 // POST /api/public/orders - a customer places an order from the table QR menu.
-// It arrives as RECEIVED and only counts once a waiter accepts it.
+// No waiter confirmation: it goes straight to the kitchen and onto the bill.
+// The waiter's board shows it as "New order" until someone taps "Got it".
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -28,13 +26,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: claim.error, code: "TABLE_TAKEN" }, { status: 403 });
     }
 
-    const pending = await prisma.orders.count({
-      where: { tableId: table.id, status: "RECEIVED", paymentStatus: "PENDING" },
-    });
-    if (pending >= MAX_PENDING_PER_TABLE) {
+    // Restaurant asks every table to verify a WhatsApp number before ordering
+    if (table.restaurants.customerOtp === "REQUIRED" && !claim.customerId) {
       return NextResponse.json(
-        { message: "The waiter hasn't confirmed your earlier orders yet. Please wait a moment or call the waiter." },
-        { status: 429 }
+        { message: "Please verify your WhatsApp number to place the order.", code: "VERIFY_PHONE" },
+        { status: 403 }
       );
     }
 
@@ -49,7 +45,7 @@ export async function POST(req: NextRequest) {
           tableNumber: table.tableNumber,
           taxRate,
           ...totalsFor(priced.lines, taxRate),
-          status: "RECEIVED",
+          status: "PREPARING",
           customerNotes: note,
           diningSessionToken: claim.sessionId,
           order_items: { create: priced.lines },

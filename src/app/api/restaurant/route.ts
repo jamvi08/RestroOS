@@ -44,11 +44,14 @@ export async function PUT(req: Request) {
     }
 
     const body = await req.json();
-    const { name, ownerName, phone, address, logoUrl } = body;
+    const { name, ownerName, phone, address, logoUrl, customerOtp } = body;
 
     const user = await prisma.users.findUnique({ where: { id: session.user.id } });
     if (!user || !user.restaurantId) {
       return NextResponse.json({ message: "Restaurant not found" }, { status: 404 });
+    }
+    if (user.role !== "ADMIN" && user.role !== "MANAGER") {
+      return NextResponse.json({ message: "Only the owner or a manager can change settings." }, { status: 403 });
     }
 
     const notApproved = await blockUnlessApproved(user.restaurantId);
@@ -61,6 +64,7 @@ export async function PUT(req: Request) {
         phone,
         address,
         ...(logoUrl && { logo: logoUrl }),
+        ...(["OFF", "OPTIONAL", "REQUIRED"].includes(customerOtp) && { customerOtp }),
       },
     });
 

@@ -16,7 +16,7 @@ export function AlertCard({
   onChange,
   showTable = true,
 }: {
-  alert: Pick<BoardAlert, "id" | "kind" | "type" | "status" | "createdAt" | "tableId" | "tableNumber" | "itemCount">;
+  alert: Pick<BoardAlert, "id" | "kind" | "type" | "status" | "createdAt" | "tableId" | "tableNumber" | "itemCount" | "items">;
   now: number;
   onChange: () => void;
   showTable?: boolean;
@@ -31,6 +31,19 @@ export function AlertCard({
     setError(null);
     try {
       await send(`/api/waiter/requests/${alert.id}`, { status });
+      onChange();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const markSeen = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await send(`/api/waiter/orders/${alert.id}`, { action: "seen" });
       onChange();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Try again.");
@@ -63,16 +76,36 @@ export function AlertCard({
         </div>
       </div>
 
+      {/* Already in the kitchen: show what was ordered so the waiter can pass it on */}
+      {alert.items && alert.items.length > 0 && (
+        <ul className="mt-3 space-y-1 rounded-xl bg-muted/60 px-3 py-2.5">
+          {alert.items.map((i, idx) => (
+            <li key={idx} className="text-base">
+              <span className="font-bold tabular-nums">{i.quantity} ×</span> {i.name}
+              {i.note && <span className="block pl-6 text-[15px] font-semibold text-warning">📝 {i.note}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+
       {error && <p className="mt-2 text-[15px] font-medium text-destructive">{error}</p>}
 
       <div className="mt-3 flex gap-2">
         {alert.kind === "ORDER" ? (
-          <Link
-            href={`/waiter/tables/${alert.tableId}`}
-            className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-full bg-primary text-base font-semibold text-primary-foreground"
-          >
-            Check &amp; accept <ChevronRight className="size-5" />
-          </Link>
+          <>
+            <Button className="flex-[2]" disabled={busy} onClick={markSeen}>
+              <Check />
+              Got it
+            </Button>
+            {showTable && (
+              <Link
+                href={`/waiter/tables/${alert.tableId}`}
+                className="inline-flex h-12 flex-1 items-center justify-center gap-1 rounded-full border border-border bg-card text-base font-semibold text-foreground"
+              >
+                Table <ChevronRight className="size-5" />
+              </Link>
+            )}
+          </>
         ) : (
           <>
             {!coming && (

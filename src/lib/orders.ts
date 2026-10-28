@@ -8,6 +8,15 @@ export function totalsFor(items: { price: number; quantity: number }[], taxRate:
   return { subtotal, tax, totalAmount: round2(subtotal + tax) };
 }
 
+/** Running bill for a table: every order that isn't cancelled (they're all on it from the moment they're placed). */
+export function billFor(orders: { subtotal: number; tax: number; totalAmount: number }[]) {
+  return {
+    subtotal: round2(orders.reduce((s, o) => s + o.subtotal, 0)),
+    tax: round2(orders.reduce((s, o) => s + o.tax, 0)),
+    total: round2(orders.reduce((s, o) => s + o.totalAmount, 0)),
+  };
+}
+
 export const MAX_LINES_PER_ORDER = 30;
 export const MAX_QTY_PER_LINE = 50;
 

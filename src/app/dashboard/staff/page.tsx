@@ -1,14 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useSession } from "next-auth/react";
-import { Users, UserPlus, MessageCircle, Trash2, KeyRound } from "lucide-react";
+import { Users, UserPlus, MessageCircle, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PhoneInput } from "@/components/ui/phone-input";
-import { PasswordInput } from "@/components/ui/password-input";
-import { MIN_PASSWORD_LENGTH } from "@/lib/password";
 import { Notice } from "@/components/ui/notice";
 import {
   Dialog,
@@ -27,13 +24,11 @@ interface StaffMember {
   phone: string | null;
   email: string | null;
   role: "WAITER" | "MANAGER" | "ADMIN";
-  hasPassword: boolean;
   isActive: boolean;
   createdAt: string;
 }
 
 export default function StaffPage() {
-  const { data: session } = useSession();
   const [staffList, setStaffList] = useState<StaffMember[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -45,48 +40,7 @@ export default function StaffPage() {
     name: "",
     phone: "",
     role: "WAITER",
-    password: "",
   });
-
-  // "Set password" dialog for an existing staff member
-  const [pwTarget, setPwTarget] = useState<StaffMember | null>(null);
-  const [pwValue, setPwValue] = useState("");
-  const [pwSaving, setPwSaving] = useState(false);
-  const [pwError, setPwError] = useState<string | null>(null);
-  const [pwDone, setPwDone] = useState<string | null>(null);
-
-  const openSetPassword = (staff: StaffMember) => {
-    setPwTarget(staff);
-    setPwValue("");
-    setPwError(null);
-  };
-
-  const handleSetPassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!pwTarget) return;
-    if (pwValue.length < MIN_PASSWORD_LENGTH) {
-      setPwError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
-      return;
-    }
-    setPwSaving(true);
-    setPwError(null);
-    try {
-      const res = await fetch(`/api/staff/${pwTarget.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: pwValue }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Could not set the password.");
-      setPwDone(`New password saved for ${pwTarget.name}. Tell them the new password.`);
-      setPwTarget(null);
-      fetchStaff();
-    } catch (err) {
-      setPwError(err instanceof Error ? err.message : "Could not set the password.");
-    } finally {
-      setPwSaving(false);
-    }
-  };
 
   const fetchStaff = async () => {
     setIsLoading(true);
@@ -119,11 +73,6 @@ export default function StaffPage() {
       setIsSubmitting(false);
       return;
     }
-    if (formData.password.length < MIN_PASSWORD_LENGTH) {
-      setError(`Set a password of at least ${MIN_PASSWORD_LENGTH} characters.`);
-      setIsSubmitting(false);
-      return;
-    }
 
     try {
       const res = await fetch("/api/staff", {
@@ -133,7 +82,6 @@ export default function StaffPage() {
           name: formData.name,
           phone: cleaned,
           role: formData.role,
-          password: formData.password,
         }),
       });
 
@@ -144,7 +92,7 @@ export default function StaffPage() {
       }
 
       setIsAddModalOpen(false);
-      setFormData({ name: "", phone: "", role: "WAITER", password: "" });
+      setFormData({ name: "", phone: "", role: "WAITER" });
       fetchStaff();
     } catch (err: any) {
       setError(err.message);
@@ -201,7 +149,7 @@ export default function StaffPage() {
     <div className="mx-auto max-w-5xl space-y-6 px-4 py-6 md:px-8 md:py-10">
       <PageHeader
         title="Staff"
-        description="Add your waiters with a password. They log in with your restaurant name, their mobile number and that password."
+        description="Add your waiters' WhatsApp numbers. They log in with that number and a code we send on WhatsApp. No password to remember."
         actions={
           <Button onClick={openAdd}>
             <UserPlus />
@@ -209,8 +157,6 @@ export default function StaffPage() {
           </Button>
         }
       />
-
-      {pwDone && <Notice tone="success">{pwDone}</Notice>}
 
       {staffList.length > 0 && (
         <div className="grid grid-cols-2 gap-3 md:max-w-md md:gap-4">
@@ -250,9 +196,6 @@ export default function StaffPage() {
                     <span className={cn("rounded-full px-2 py-0.5 text-xs font-bold", roleStyle[staff.role])}>
                       {roleLabel[staff.role]}
                     </span>
-                    {!staff.hasPassword && (
-                      <span className="rounded-full bg-warning-soft px-2 py-0.5 text-xs font-bold text-warning">No password</span>
-                    )}
                   </div>
                   <p className="mt-0.5 flex items-center gap-1.5 text-[15px] tabular-nums text-muted-foreground">
                     <MessageCircle className="size-4 text-success" />
@@ -270,11 +213,7 @@ export default function StaffPage() {
                 </Button>
               </div>
 
-              <div className="flex items-center justify-between border-t border-border pt-3">
-                <Button variant="outline" size="sm" onClick={() => openSetPassword(staff)}>
-                  <KeyRound />
-                  {staff.hasPassword ? "Reset password" : "Set password"}
-                </Button>
+              <div className="flex items-center justify-end border-t border-border pt-3">
                 <button
                   type="button"
                   role="switch"
@@ -311,7 +250,7 @@ export default function StaffPage() {
           <DialogHeader>
             <DialogTitle>Add staff</DialogTitle>
             <DialogDescription>
-              Give them your restaurant name, this mobile number and the password below. That&apos;s all they need to log in.
+              They open the waiter login on their phone, type this number and enter the code we send on WhatsApp.
             </DialogDescription>
           </DialogHeader>
 
@@ -336,18 +275,6 @@ export default function StaffPage() {
                 placeholder="98765 43210"
                 value={formData.phone}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value.replace(/\D/g, "") })}
-                required
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="staff-password">Login password</Label>
-              <PasswordInput
-                id="staff-password"
-                autoComplete="new-password"
-                placeholder={`At least ${MIN_PASSWORD_LENGTH} letters or numbers`}
-                value={formData.password}
-                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                 required
               />
             </div>
@@ -383,41 +310,6 @@ export default function StaffPage() {
               </Button>
               <Button type="submit" disabled={isSubmitting}>
                 {isSubmitting ? "Adding..." : "Add staff"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Set / reset a staff member's password */}
-      <Dialog open={pwTarget !== null} onOpenChange={(open) => !open && setPwTarget(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{pwTarget?.hasPassword ? "Reset password" : "Set password"}</DialogTitle>
-            <DialogDescription>
-              New password for <strong className="text-foreground">{pwTarget?.name}</strong>. Their old password stops working.
-            </DialogDescription>
-          </DialogHeader>
-          <form onSubmit={handleSetPassword} className="flex flex-col gap-5">
-            {pwError && <Notice>{pwError}</Notice>}
-            <div className="space-y-2">
-              <Label htmlFor="reset-staff-password">New password</Label>
-              <PasswordInput
-                id="reset-staff-password"
-                autoComplete="new-password"
-                autoFocus
-                placeholder={`At least ${MIN_PASSWORD_LENGTH} letters or numbers`}
-                value={pwValue}
-                onChange={(e) => setPwValue(e.target.value)}
-                required
-              />
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setPwTarget(null)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={pwSaving}>
-                {pwSaving ? "Saving..." : "Save password"}
               </Button>
             </DialogFooter>
           </form>

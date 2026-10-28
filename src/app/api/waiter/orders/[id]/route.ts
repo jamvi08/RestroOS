@@ -2,9 +2,9 @@ import { NextResponse, NextRequest } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireStaff } from "@/lib/staff-auth";
 
-// POST /api/waiter/orders/:id  { action: "accept" | "reject" | "served" }
-//   accept  - waiter checked a customer's QR order with them; send it to the kitchen
-//   reject  - prank or duplicate order
+// POST /api/waiter/orders/:id  { action: "seen" | "cancel" | "served" }
+//   seen    - waiter tapped "Got it" on a new QR order (clears the alert; the order is already in the kitchen)
+//   cancel  - prank, duplicate or wrong order; comes off the bill
 //   served  - food has reached the table
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -14,29 +14,29 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const order = await prisma.orders.findFirst({
       where: { id, restaurantId: auth.staff.restaurantId, paymentStatus: "PENDING" },
-      select: { id: true, status: true },
+      select: { id: true, status: true, seenAt: true },
     });
     if (!order) return NextResponse.json({ message: "Order not found." }, { status: 404 });
 
     const { action } = (await req.json()) as { action?: string };
 
-    if (action === "accept" || action === "reject") {
-      // Conditional update so two waiters tapping at once can't both win
-      const updated = await prisma.orders.updateMany({
-        where: { id, status: "RECEIVED" },
-        data: { status: action === "accept" ? "PREPARING" : "CANCELLED" },
-      });
-      if (updated.count === 0) {
-        return NextResponse.json({ message: "Another waiter already handled this order." }, { status: 409 });
-      }
+    if (action === "seen") {
+      // Two waiters tapping at once is fine: the first time wins, the second is a no-op
+      await prisma.orders.updateMany({ where: { id, seenAt: null }, data: { seenAt: new Date() } });
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === "cancel") {
+      if (order.status === "CANCELLED") return NextResponse.json({ success: true });
+      await prisma.orders.update({ where: { id }, data: { status: "CANCELLED", seenAt: order.seenAt ?? new Date() } });
       return NextResponse.json({ success: true });
     }
 
     if (action === "served") {
-      if (order.status === "RECEIVED" || order.status === "CANCELLED") {
-        return NextResponse.json({ message: "Accept the order before marking it served." }, { status: 409 });
+      if (order.status === "CANCELLED") {
+        return NextResponse.json({ message: "This order was cancelled." }, { status: 409 });
       }
-      await prisma.orders.update({ where: { id }, data: { status: "SERVED" } });
+      await prisma.orders.update({ where: { id }, data: { status: "SERVED", seenAt: order.seenAt ?? new Date() } });
       return NextResponse.json({ success: true });
     }
 

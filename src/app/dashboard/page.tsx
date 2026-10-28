@@ -1,4 +1,4 @@
-import { BookOpen, QrCode, Users, Settings, ClipboardList, TrendingUp, Utensils, ChevronRight, PlusCircle } from "lucide-react";
+import { BookOpen, QrCode, Users, Settings, ClipboardList, TrendingUp, Utensils, ChevronRight, PlusCircle, Contact } from "lucide-react";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import prisma from "@/lib/prisma";
@@ -7,6 +7,7 @@ import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { StatCard } from "@/components/dashboard/PageHeader";
 import { cn, formatPrice } from "@/lib/utils";
+import { istDayStart } from "@/lib/dates";
 
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions);
@@ -29,27 +30,25 @@ export default async function DashboardPage() {
   }
 
   const restaurant = user.restaurants;
-  const startOfToday = new Date();
-  startOfToday.setHours(0, 0, 0, 0);
+  const startOfToday = istDayStart();
 
-  const [totalMenuItems, activeMenuItems, tableCount, staffCount, todaysOrders, todaysSales] = await Promise.all([
+  const [totalMenuItems, activeMenuItems, tableCount, staffCount, todaysOrders, todaysSales, customerCount] = await Promise.all([
     prisma.menu_items.count({ where: { restaurantId: restaurant.id } }),
     prisma.menu_items.count({ where: { restaurantId: restaurant.id, isAvailable: true, isActive: true } }),
     prisma.tables.count({ where: { restaurantId: restaurant.id } }),
     prisma.users.count({ where: { restaurantId: restaurant.id, role: "WAITER" } }),
-    // Confirmed orders only: unaccepted customer orders and rejected ones don't count
     prisma.orders.count({
-      where: { restaurantId: restaurant.id, createdAt: { gte: startOfToday }, status: { notIn: ["RECEIVED", "CANCELLED"] } },
+      where: { restaurantId: restaurant.id, createdAt: { gte: startOfToday }, status: { not: "CANCELLED" } },
     }),
     prisma.orders.aggregate({
       where: { restaurantId: restaurant.id, createdAt: { gte: startOfToday }, paymentStatus: "PAID" },
       _sum: { totalAmount: true },
     }),
+    prisma.customers.count({ where: { restaurantId: restaurant.id } }),
   ]);
 
   // Customer ratings from the last 30 days (1 = bad, 2 = okay, 3 = good)
-  const since30 = new Date(startOfToday);
-  since30.setDate(since30.getDate() - 30);
+  const since30 = istDayStart(30);
   const [ratingCounts, recentComments] = await Promise.all([
     prisma.feedback.groupBy({
       by: ["rating"],
@@ -69,10 +68,12 @@ export default async function DashboardPage() {
 
   const firstName = user.name.split(" ")[0];
   const manage = [
-    { href: "/dashboard/menu", icon: BookOpen, title: "Menu", detail: `${totalMenuItems} dishes` },
+    { href: "/dashboard/menu", icon: BookOpen, title: "Menu", detail: `${activeMenuItems} of ${totalMenuItems} available` },
     { href: "/dashboard/tables", icon: QrCode, title: "Tables & QR", detail: `${tableCount} tables` },
     { href: "/dashboard/staff", icon: Users, title: "Staff", detail: `${staffCount} waiters` },
-    { href: "/dashboard/settings", icon: Settings, title: "Settings", detail: "Shop details" },
+    { href: "/dashboard/customers", icon: Contact, title: "Customers", detail: `${customerCount} numbers` },
+    { href: "/dashboard/sales", icon: TrendingUp, title: "Sales", detail: "What sells, what to stock" },
+    { href: "/dashboard/settings", icon: Settings, title: "Settings", detail: "Shop & WhatsApp" },
   ];
 
   // First-run checklist: shown until the owner has a menu and at least one table
@@ -127,18 +128,22 @@ export default async function DashboardPage() {
       )}
 
       <section className="grid grid-cols-2 gap-3 md:gap-4">
-        <StatCard
-          icon={ClipboardList}
-          label="Orders today"
-          value={todaysOrders}
-          hint={todaysOrders === 0 ? "No orders yet today" : undefined}
-        />
-        <StatCard
-          icon={TrendingUp}
-          label="Paid today"
-          value={formatPrice(todaysSales._sum.totalAmount ?? 0, restaurant.currency)}
-          hint={`${activeMenuItems} of ${totalMenuItems} dishes available`}
-        />
+        <Link href="/dashboard/orders" className="rounded-2xl hover:[&>div]:border-primary">
+          <StatCard
+            icon={ClipboardList}
+            label="Orders today"
+            value={todaysOrders}
+            hint={todaysOrders === 0 ? "No orders yet today" : "See live orders →"}
+          />
+        </Link>
+        <Link href="/dashboard/bills" className="rounded-2xl hover:[&>div]:border-primary">
+          <StatCard
+            icon={TrendingUp}
+            label="Paid today"
+            value={formatPrice(todaysSales._sum.totalAmount ?? 0, restaurant.currency)}
+            hint="See bills →"
+          />
+        </Link>
       </section>
 
       <section className="space-y-3">
@@ -148,7 +153,7 @@ export default async function DashboardPage() {
             <PlusCircle /> Add dish
           </Link>
         </div>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4">
           {manage.map((m) => (
             <Link
               key={m.href}

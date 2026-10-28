@@ -2,7 +2,7 @@ import { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import prisma from "@/lib/prisma";
-import { normalizeRestaurantName } from "@/lib/utils";
+import { readStaffTicket } from "@/lib/signed-token";
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -13,50 +13,31 @@ export const authOptions: NextAuthOptions = {
         type: { label: "Type", type: "text" },
         email: { label: "Email", type: "text" },
         password: { label: "Password", type: "password" },
-        phone: { label: "Phone", type: "text" },
-        restaurantName: { label: "Restaurant", type: "text" },
+        ticket: { label: "Ticket", type: "text" },
+        userId: { label: "User", type: "text" },
       },
       async authorize(credentials) {
         if (!credentials) {
           return null;
         }
 
-        // Restaurant name + Phone + Password Login (for Waiters and Staff).
-        // Managers set staff passwords; WhatsApp OTP is only a "forgot password" backup.
-        if (credentials.type === "phone-password") {
-          const cleanedPhone = (credentials.phone || "").replace(/\D/g, "").slice(-10);
-
-          if (cleanedPhone.length !== 10) {
-            throw new Error("Please enter a valid 10-digit mobile number.");
+        // Waiters and staff: mobile number + WhatsApp code, no password.
+        // /api/auth/staff/verify checks the code and hands back a ticket; the
+        // waiter then picks which restaurant (userId) to log in to.
+        if (credentials.type === "staff-ticket") {
+          const phone = readStaffTicket(credentials.ticket);
+          if (!phone) {
+            throw new Error("Your code has expired. Please ask for a new code.");
           }
-
-          const wrongDetails = "Restaurant name, mobile number or password is wrong. Please check and try again.";
+          if (!credentials.userId) {
+            throw new Error("Please choose your restaurant.");
+          }
 
           const staffUser = await prisma.users.findFirst({
-            where: {
-              phone: cleanedPhone,
-              isActive: true,
-            },
-            include: { restaurants: { select: { name: true } } },
+            where: { id: credentials.userId, phone, isActive: true, restaurantId: { not: null } },
           });
-
-          const typedRestaurant = normalizeRestaurantName(credentials.restaurantName || "");
-          if (
-            !staffUser ||
-            !staffUser.restaurants ||
-            !typedRestaurant ||
-            normalizeRestaurantName(staffUser.restaurants.name) !== typedRestaurant
-          ) {
-            throw new Error(wrongDetails);
-          }
-
-          if (!staffUser.password) {
-            throw new Error("Your password isn't set yet. Ask your manager to set it in Staff, or tap Forgot password.");
-          }
-
-          const isValidPassword = await bcrypt.compare(credentials.password || "", staffUser.password);
-          if (!isValidPassword) {
-            throw new Error(wrongDetails);
+          if (!staffUser) {
+            throw new Error("You are not on this restaurant's staff list any more.");
           }
 
           return {

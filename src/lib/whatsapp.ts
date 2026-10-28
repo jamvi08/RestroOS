@@ -4,13 +4,13 @@ export interface WhatsAppSendResult {
 }
 
 /**
- * Send OTP via WhatsApp using a self-hosted server (Whatsmeow or OpenWA).
+ * Send a WhatsApp text via a self-hosted server (Whatsmeow or OpenWA).
  * Both expose the same REST API — just point WA_SERVER_URL at whichever you run.
  *
  * @param phone - 10-digit Indian mobile number (without country code)
- * @param otp - The OTP code to send
+ * @param text - Message body (WhatsApp *bold* formatting works)
  */
-export async function sendWhatsAppOTP(phone: string, otp: string): Promise<WhatsAppSendResult> {
+export async function sendWhatsAppText(phone: string, text: string): Promise<WhatsAppSendResult> {
   const serverUrl = process.env.WA_SERVER_URL;
   const apiKey = process.env.WA_API_KEY;
 
@@ -26,15 +26,14 @@ export async function sendWhatsAppOTP(phone: string, otp: string): Promise<Whats
     console.warn(
       `\n======================================================\n` +
       `⚠️  [WhatsApp Dev Mode] WA_SERVER_URL or WA_API_KEY not set.\n` +
-      `📲  OTP for +91 ${cleanedPhone}: ${otp}\n` +
+      `📲  Message for +91 ${cleanedPhone}:\n${text}\n` +
       `======================================================\n`
     );
-    return { success: true, data: { simulated: true, otp } };
+    return { success: true, data: { simulated: true } };
   }
 
   // chatId format for whatsmeow: 91XXXXXXXXXX@s.whatsapp.net
   const chatId = `91${cleanedPhone}@s.whatsapp.net`;
-  const text = `Your RestroOS OTP is: *${otp}*\nValid for 10 minutes. Do not share this with anyone.`;
 
   try {
     const response = await fetch(`${serverUrl}/api/sendText`, {
@@ -54,7 +53,7 @@ export async function sendWhatsAppOTP(phone: string, otp: string): Promise<Whats
     }
 
     const data = await response.json();
-    console.log(`OTP sent successfully to ${cleanedPhone}:`, data);
+    console.log(`WhatsApp message sent to ${cleanedPhone}:`, data);
     return { success: true, data };
   } catch (err: any) {
     console.error(`[WhatsApp Error] Could not reach WhatsApp server at ${serverUrl}:`, err.message || err);
@@ -64,8 +63,7 @@ export async function sendWhatsAppOTP(phone: string, otp: string): Promise<Whats
       console.warn(
         `\n======================================================\n` +
         `⚠️  [WhatsApp Server Unreachable at ${serverUrl}]\n` +
-        `📲  DEV FALLBACK OTP FOR +91 ${cleanedPhone}: ${otp}\n` +
-        `👉  Enter "${otp}" on screen to sign in.\n` +
+        `📲  DEV FALLBACK message for +91 ${cleanedPhone}:\n${text}\n` +
         `💡  Note: Check that the WhatsApp server is running and WA_API_KEY is correct.\n` +
         `======================================================\n`
       );
@@ -73,8 +71,7 @@ export async function sendWhatsAppOTP(phone: string, otp: string): Promise<Whats
         success: true,
         data: {
           simulated: true,
-          otp,
-          reason: `WhatsApp server at ${serverUrl} timed out (connection failed). Falling back to dev OTP.`,
+          reason: `WhatsApp server at ${serverUrl} timed out (connection failed).`,
         },
       };
     }
@@ -83,4 +80,9 @@ export async function sendWhatsAppOTP(phone: string, otp: string): Promise<Whats
       `Could not reach WhatsApp server at ${serverUrl}. Please check the server and WA_API_KEY.`
     );
   }
+}
+
+/** Send a login code. In dev (no WhatsApp server) `data.simulated` is true so the screen can show the code. */
+export async function sendWhatsAppOTP(phone: string, otp: string): Promise<WhatsAppSendResult> {
+  return sendWhatsAppText(phone, `Your RestroOS OTP is: *${otp}*\nValid for 10 minutes. Do not share this with anyone.`);
 }

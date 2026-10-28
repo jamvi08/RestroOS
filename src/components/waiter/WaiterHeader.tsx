@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut } from "next-auth/react";
-import { LayoutGrid, LogOut, BookOpen } from "lucide-react";
+import { LayoutGrid, LogOut, BookOpen, ArrowLeftRight, LayoutDashboard } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const tabs = [
@@ -11,7 +11,17 @@ const tabs = [
   { href: "/waiter/menu", label: "Sold out", icon: BookOpen },
 ];
 
-export function WaiterHeader({ restaurantName }: { restaurantName: string }) {
+export type WaiterHeaderInfo = {
+  restaurantName: string;
+  /** This number is also on another restaurant's staff list */
+  canSwitch: boolean;
+  /** Managers and owners also get a link to the dashboard */
+  isManager: boolean;
+};
+
+const headerLink = "inline-flex h-10 items-center gap-1.5 rounded-full px-3 text-sm font-semibold text-muted-foreground hover:bg-muted";
+
+export function WaiterHeader({ restaurantName, canSwitch, isManager }: WaiterHeaderInfo) {
   const pathname = usePathname();
 
   return (
@@ -24,13 +34,24 @@ export function WaiterHeader({ restaurantName }: { restaurantName: string }) {
             On duty
           </p>
         </div>
-        <button
-          onClick={() => signOut({ callbackUrl: "/waiter/login" })}
-          className="inline-flex h-10 items-center gap-1.5 rounded-full px-3 text-sm font-semibold text-muted-foreground hover:bg-muted"
-        >
-          <LogOut className="size-4" />
-          Log out
-        </button>
+        <div className="flex shrink-0 items-center">
+          {isManager && (
+            <Link href="/dashboard" className={headerLink}>
+              <LayoutDashboard className="size-4" />
+              <span className="max-sm:sr-only">Dashboard</span>
+            </Link>
+          )}
+          {canSwitch && (
+            <Link href="/waiter/login?switch=1" className={headerLink}>
+              <ArrowLeftRight className="size-4" />
+              Switch
+            </Link>
+          )}
+          <button onClick={() => signOut({ callbackUrl: "/waiter/login" })} className={headerLink}>
+            <LogOut className="size-4" />
+            <span className={cn((canSwitch || isManager) && "max-sm:sr-only")}>Log out</span>
+          </button>
+        </div>
       </div>
       <nav className="mx-auto grid max-w-3xl grid-cols-2 px-4">
         {tabs.map((t) => {

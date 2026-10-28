@@ -13,6 +13,7 @@ export async function requireWaiterPage() {
     select: {
       role: true,
       isActive: true,
+      phone: true,
       restaurants: { select: { name: true, currency: true, status: true } },
     },
   });
@@ -21,5 +22,17 @@ export async function requireWaiterPage() {
   if (!user || !user.isActive || !user.restaurants) redirect("/waiter/login");
   if (user.restaurants.status !== "APPROVED") redirect("/dashboard");
 
-  return { restaurantName: user.restaurants.name, currency: user.restaurants.currency };
+  // Same number on another restaurant's staff list: offer "Switch restaurant"
+  const elsewhere = user.phone
+    ? await prisma.users.count({ where: { phone: user.phone, isActive: true, id: { not: session.user.id }, restaurantId: { not: null } } })
+    : 0;
+
+  return {
+    currency: user.restaurants.currency,
+    header: {
+      restaurantName: user.restaurants.name,
+      canSwitch: elsewhere > 0,
+      isManager: user.role === "MANAGER" || user.role === "ADMIN",
+    },
+  };
 }

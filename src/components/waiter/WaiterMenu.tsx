@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
 import { VegMark } from "@/components/ui/veg-mark";
 import { cn, formatPrice } from "@/lib/utils";
-import { WaiterHeader } from "./WaiterHeader";
+import { WaiterHeader, type WaiterHeaderInfo } from "./WaiterHeader";
 import { send } from "./use-waiter-data";
 
 type MenuItem = {
@@ -19,7 +19,7 @@ type MenuItem = {
 };
 
 /** "Dal khatam" — mark dishes sold out so customers can't order them from the QR menu. */
-export function WaiterMenu({ restaurantName, currency }: { restaurantName: string; currency: string }) {
+export function WaiterMenu({ header, currency }: { header: WaiterHeaderInfo; currency: string }) {
   const [menu, setMenu] = useState<MenuItem[] | null>(null);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -56,7 +56,7 @@ export function WaiterMenu({ restaurantName, currency }: { restaurantName: strin
 
   return (
     <div className="min-h-dvh bg-background">
-      <WaiterHeader restaurantName={restaurantName} />
+      <WaiterHeader {...header} />
       <main className="mx-auto max-w-3xl space-y-4 px-4 py-4 pb-10">
         <div>
           <h1 className="text-xl font-bold text-foreground">Sold out dishes</h1>

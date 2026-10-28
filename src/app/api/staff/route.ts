@@ -1,9 +1,7 @@
 import { NextResponse, NextRequest } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
-import bcrypt from "bcryptjs";
 import prisma from "@/lib/prisma";
-import { MIN_PASSWORD_LENGTH } from "@/lib/password";
 import { blockUnlessApproved } from "@/lib/approval";
 
 // GET /api/staff - List all staff for the manager's restaurant
@@ -38,13 +36,11 @@ export async function GET(req: NextRequest) {
         role: true,
         isActive: true,
         createdAt: true,
-        password: true,
       },
       orderBy: { createdAt: "desc" },
     });
 
-    // Never send password hashes to the browser, only whether one is set
-    return NextResponse.json(staff.map(({ password, ...s }) => ({ ...s, hasPassword: Boolean(password) })));
+    return NextResponse.json(staff);
   } catch (error: any) {
     console.error("Error fetching staff:", error);
     return NextResponse.json({ message: "Internal server error" }, { status: 500 });
@@ -80,18 +76,11 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
-    const { name, phone, role, pinCode, password } = body;
+    const { name, phone, role } = body;
 
     if (!name || !phone) {
       return NextResponse.json(
         { message: "Name and phone number are required." },
-        { status: 400 }
-      );
-    }
-
-    if (typeof password !== "string" || password.length < MIN_PASSWORD_LENGTH) {
-      return NextResponse.json(
-        { message: `Set a login password of at least ${MIN_PASSWORD_LENGTH} characters for this staff member.` },
         { status: 400 }
       );
     }
@@ -104,20 +93,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Check if user with this phone already exists
+    // The same waiter may also work at another restaurant; they choose which one after logging in
     const existing = await prisma.users.findFirst({
-      where: { phone: cleanedPhone },
+      where: { phone: cleanedPhone, restaurantId: currentUser.restaurantId },
     });
 
     if (existing) {
-      if (existing.restaurantId === currentUser.restaurantId) {
-        return NextResponse.json(
-          { message: "A staff member with this phone number already exists in your restaurant." },
-          { status: 409 }
-        );
-      }
       return NextResponse.json(
-        { message: "This phone number is already registered with another restaurant account." },
+        { message: "A staff member with this phone number already exists in your restaurant." },
         { status: 409 }
       );
     }
@@ -128,8 +111,6 @@ export async function POST(req: NextRequest) {
         phone: cleanedPhone,
         role: role === "MANAGER" ? "MANAGER" : "WAITER",
         restaurantId: currentUser.restaurantId,
-        pinCode: pinCode || "1234",
-        password: await bcrypt.hash(password, 10),
         isActive: true,
       },
       select: {

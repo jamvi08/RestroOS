@@ -17,7 +17,7 @@ export async function findTableByQr(slug: unknown, token: unknown) {
       id: true,
       tableNumber: true,
       restaurantId: true,
-      restaurants: { select: { taxRate: true } },
+      restaurants: { select: { taxRate: true, customerOtp: true } },
     },
   });
 }
