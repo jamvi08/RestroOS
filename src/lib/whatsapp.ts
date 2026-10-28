@@ -21,8 +21,12 @@ export async function sendWhatsAppText(phone: string, text: string): Promise<Wha
     throw new Error("Invalid mobile number. Please provide a valid 10-digit Indian mobile number.");
   }
 
-  // Fallback for development if WA server is not configured
+  // Fallback for development if WA server is not configured.
+  // Never in production: login codes would show on screen for anyone.
   if (!serverUrl || !apiKey) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("WhatsApp server is not set up. Set WA_SERVER_URL and WA_API_KEY.");
+    }
     console.warn(
       `\n======================================================\n` +
       `⚠️  [WhatsApp Dev Mode] WA_SERVER_URL or WA_API_KEY not set.\n` +

@@ -36,7 +36,9 @@ export async function issueOtp(phone: string, purpose: string, tableId?: string)
   });
 
   const sent = await sendWhatsAppOTP(phone, otp);
-  return { devOtp: sent.data?.simulated ? otp : undefined } as const;
+  // Test mode only: the code is shown on screen, which must never happen on the live site
+  const showOnScreen = sent.data?.simulated && process.env.NODE_ENV !== "production";
+  return { devOtp: showOnScreen ? otp : undefined } as const;
 }
 
 /**
